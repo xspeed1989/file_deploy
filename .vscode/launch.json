@@ -7,7 +7,7 @@
         {
             "type": "lldb",
             "request": "launch",
-            "name": "Cargo launch",
+            "name": "Cargo launch server",
             "cargo": {
                 "args": [
                     "build",
@@ -15,8 +15,26 @@
                     "file_deploy"
                 ]
             },
-            "args": []
-        }
-
+            "args": [
+                "serv", "--cert", "certs/cert.pem", "--private_key", "certs/key.pem", "."
+            ],
+            "cwd": "${workspaceFolder}/target/debug",
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Cargo launch client",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin",
+                    "file_deploy"
+                ]
+            },
+            "args": [
+                "deploy", "--server", "127.0.0.1:4399", "--fingerprint", "bea0153f9e34235f5078f8f53d0c2e58c9b4ee2585c9baa1b9e1cf7ab3533425", ".:/remote"
+            ],
+            "cwd": "${workspaceFolder}/target/debug",
+        },
     ]
 }
