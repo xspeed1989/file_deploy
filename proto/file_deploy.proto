@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package file_deploy;
+
+message AuthRequest {
+    string password = 1;
+}
+
+message AuthResponse {
+    bool success = 1;
+}
+
+message MkDirRequest {
+    string absolute_path = 1;
+}
+
+message MkDirResponse {
+    bool success = 1;
+    string error = 2;
+}
+
+message StartUploadRequest {
+    string absolute_path = 1;
+    uint64 total_size = 2;
+}
+
+message StartUploadResponse {
+    bool success = 1;
+    string error = 2;
+}
+
+
+message UploadChunkRequest {
+    string absolute_path = 1;
+    uint64 offset = 2;
+    bytes data = 3;
+    bool is_last_chunk = 4;
+}
+
+message UploadChunkResponse {
+    bool success = 1;
+    uint64 offset = 2;
+    string error = 3;
+}

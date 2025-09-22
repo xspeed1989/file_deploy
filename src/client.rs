@@ -33,6 +33,7 @@ impl TypedValueParser for DeployPathPairValueParser {
 pub(crate) async fn run(
     server: &String,
     fingerprint: &String,
+    password: &String,
     paths: Vec<&DeployPathPair>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("Deploying to server {}, fingerprint: {}, paths: {:?}", server, fingerprint, paths);
