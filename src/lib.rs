@@ -4,6 +4,10 @@ mod server;
 mod client;
 mod data_define;
 
+mod file_deploy {
+    include!(concat!(env!("OUT_DIR"), "/file_deploy.rs"));
+}
+
 fn cli() -> Command {
     
     Command::new("file-deploy")
@@ -13,13 +17,14 @@ fn cli() -> Command {
         .subcommand(
             Command::new("serv")
                 .about("the server mode, accept file upload")
-                .arg(arg!(listen: -l --listen [LISTEN] "listening address").default_value(":4399"))
-                .arg(arg!(cert: --cert <CERT> "TLS certificate file path"))
-                .arg(arg!(private_key: --private_key <PRIVATE_KEY> "TLS private key file path"))
+                .arg(arg!(listen: -l --listen [LISTEN] "listening address").default_value("0.0.0.0:4399"))
+                .arg(arg!(cert: -c --cert <CERT> "TLS certificate file path"))
+                .arg(arg!(key: -k --key <PRIVATE_KEY> "TLS private key file path"))
                 .arg(arg!(password: -p --password <PASSWORD> "set a password for upload authentication"))
+                .arg(arg!(script: -s --script [SCRIPT] "a script to run after all files are uploaded"))
                 .arg(
                     arg!(<DIR> ... "whitelisted directories to save uploaded files")
-                        .value_parser(value_parser!(std::path::PathBuf)).last(true),
+                        .value_parser(value_parser!(std::path::PathBuf)),
                 ),
         )
         .subcommand(
@@ -39,17 +44,17 @@ pub async fn entry() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Some(("serv", sub_m)) => {
             let listen = sub_m.get_one::<String>("listen").unwrap();
             let cert = sub_m.get_one::<String>("cert").unwrap();
-            let private_key = sub_m.get_one::<String>("private_key").unwrap();
+            let private_key = sub_m.get_one::<String>("key").unwrap();
             let password = sub_m.get_one::<String>("password").unwrap();
             let dirs: Vec<&std::path::PathBuf> = sub_m.get_many::<std::path::PathBuf>("DIR").unwrap().collect();
-            return server::run(listen, cert, private_key, password,dirs).await;
+            let script = sub_m.get_one::<String>("script");
+            return server::run(listen, cert, private_key, password, dirs, script).await;
         }
         Some(("deploy", sub_m)) => {
             let server = sub_m.get_one::<String>("server").unwrap();
             let fingerprint = sub_m.get_one::<String>("fingerprint").unwrap();
             let password = sub_m.get_one::<String>("password").unwrap();
             let paths = sub_m.get_many::<client::DeployPathPair>("PATH").unwrap().collect();
-            println!("Deploying to server {}, fingerprint: {}, paths: {:?}", server, fingerprint, paths);
             return client::run(server, fingerprint, password, paths).await;
         }
         _ => {

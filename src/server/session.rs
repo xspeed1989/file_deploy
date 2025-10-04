@@ -1,46 +1,50 @@
 use crate::data_define::*;
 use prost::Message;
 use std::collections::VecDeque;
-use std::sync::{Arc, Condvar};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf, split};
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex as AsyncMutex, Notify, oneshot};
 use tokio::task::JoinSet;
 use tokio_rustls::{TlsAcceptor, server::TlsStream};
-mod file_deploy {
-    include!(concat!(env!("OUT_DIR"), "/file_deploy.rs"));
-}
 
 use crate::data_define;
+use crate::file_deploy;
 use crate::server::config::get_config;
 
-const MAX_QUEUE_LEN: usize = 128;
-
 pub(crate) struct Session {
+    peer: AsyncMutex<String>,
     authenticated: AsyncMutex<bool>,
     write_queue: AsyncMutex<VecDeque<Vec<u8>>>,
     notify: Notify,
     file_handles: AsyncMutex<std::collections::HashMap<String, tokio::fs::File>>,
+    need_stop: AtomicBool,
 }
 
 fn is_valid_path(path: &str) -> bool {
     let config = get_config();
     for white_dir in config.whitelisted_dirs {
         let white_dir = white_dir.to_str().unwrap().to_string();
+        #[cfg(target_os = "windows")]
+        let path = path.replace("/", "\\");
         if path.starts_with(white_dir.trim_end_matches(std::path::MAIN_SEPARATOR)) {
             return true;
         }
     }
+    println!("Path not allowed: {}", path);
     false
 }
 
 impl Session {
     pub(crate) fn new() -> Self {
         Session {
+            peer: AsyncMutex::new(String::new()),
             authenticated: AsyncMutex::new(false),
             write_queue: AsyncMutex::new(VecDeque::new()),
             notify: Notify::new(),
             file_handles: AsyncMutex::new(std::collections::HashMap::new()),
+            need_stop: AtomicBool::new(false),
         }
     }
 
@@ -54,7 +58,17 @@ impl Session {
             let auth_req = auth_req.unwrap();
             let config = get_config();
             if auth_req.password == config.password {
+                println!(
+                    "Authentication successful, peer: {}",
+                    self.peer.lock().await
+                );
                 *self.authenticated.lock().await = true;
+            } else {
+                println!(
+                    "Authentication failed: incorrect password, {}, peer: {}",
+                    auth_req.password,
+                    self.peer.lock().await
+                );
             }
         }
         // 发送认证结果
@@ -67,6 +81,10 @@ impl Session {
 
     async fn on_mkdir(self: Arc<Self>, payload: &[u8]) {
         if !self.clone().is_authenticated().await {
+            println!(
+                "MkDir request but not authenticated, peer: {}",
+                self.peer.lock().await
+            );
             let resp = file_deploy::MkDirResponse {
                 success: false,
                 error: "Not authenticated".to_string(),
@@ -77,6 +95,7 @@ impl Session {
         }
         let mk_dir_req = file_deploy::MkDirRequest::decode(payload);
         if !mk_dir_req.is_ok() {
+            println!("Invalid MkDir request, peer: {}", self.peer.lock().await);
             let resp = file_deploy::MkDirResponse {
                 success: false,
                 error: "Invalid request".to_string(),
@@ -86,7 +105,17 @@ impl Session {
             return;
         }
         let mk_dir_req = mk_dir_req.unwrap();
+        println!(
+            "MkDir request: {}, peer: {}",
+            mk_dir_req.absolute_path,
+            self.peer.lock().await
+        );
         if !is_valid_path(&mk_dir_req.absolute_path) {
+            println!(
+                "MkDir request with invalid path: {}, peer: {}",
+                mk_dir_req.absolute_path,
+                self.peer.lock().await
+            );
             let resp = file_deploy::MkDirResponse {
                 success: false,
                 error: "Path not allowed".to_string(),
@@ -102,6 +131,10 @@ impl Session {
                 error: "".to_string(),
             }
         } else {
+            println!(
+                "Failed to create directory, peer: {}",
+                self.peer.lock().await
+            );
             file_deploy::MkDirResponse {
                 success: false,
                 error: format!("Failed to create directory: {}", result.err().unwrap()),
@@ -113,6 +146,10 @@ impl Session {
 
     async fn on_start_upload(self: Arc<Self>, payload: &[u8]) {
         if !self.clone().is_authenticated().await {
+            println!(
+                "Start upload request but not authenticated, peer: {}",
+                self.peer.lock().await
+            );
             let resp = file_deploy::StartUploadResponse {
                 success: false,
                 error: "Not authenticated".to_string(),
@@ -124,6 +161,10 @@ impl Session {
 
         let start_upload_req = file_deploy::StartUploadRequest::decode(payload);
         if !start_upload_req.is_ok() {
+            println!(
+                "Invalid StartUpload request, peer: {}",
+                self.peer.lock().await
+            );
             let resp = file_deploy::StartUploadResponse {
                 success: false,
                 error: "Invalid request".to_string(),
@@ -133,8 +174,18 @@ impl Session {
             return;
         }
         let start_upload_req = start_upload_req.unwrap();
-
+        println!(
+            "Start upload request for file: {}, size: {}, peer: {}",
+            start_upload_req.absolute_path,
+            start_upload_req.total_size,
+            self.peer.lock().await
+        );
         if !is_valid_path(&start_upload_req.absolute_path) {
+            println!(
+                "StartUpload request with invalid path: {}, peer: {}",
+                start_upload_req.absolute_path,
+                self.peer.lock().await
+            );
             let resp: file_deploy::StartUploadResponse = file_deploy::StartUploadResponse {
                 success: false,
                 error: "Path not allowed".to_string(),
@@ -150,6 +201,11 @@ impl Session {
             .open(&start_upload_req.absolute_path)
             .await;
         if file.is_err() {
+            println!(
+                "Failed to open file for upload: {}, peer: {}",
+                start_upload_req.absolute_path,
+                self.peer.lock().await
+            );
             let resp = file_deploy::StartUploadResponse {
                 success: false,
                 error: format!("Failed to open file: {}", file.err().unwrap()),
@@ -159,10 +215,18 @@ impl Session {
             return;
         }
         {
-            self.file_handles
-                .lock()
-                .await
-                .insert(start_upload_req.absolute_path.clone(), file.unwrap());
+            if start_upload_req.total_size == 0 {
+                println!(
+                    "Warning: Start upload request with total_size=0 for file: {}, peer: {}",
+                    start_upload_req.absolute_path,
+                    self.peer.lock().await
+                );
+            } else {
+                self.file_handles
+                    .lock()
+                    .await
+                    .insert(start_upload_req.absolute_path.clone(), file.unwrap());
+            }
         }
         let resp = file_deploy::StartUploadResponse {
             success: true,
@@ -174,6 +238,10 @@ impl Session {
 
     async fn on_upload_chunk(self: Arc<Self>, payload: &[u8]) {
         if !self.clone().is_authenticated().await {
+            println!(
+                "Upload chunk request but not authenticated, peer: {}",
+                self.peer.lock().await
+            );
             let resp = file_deploy::UploadChunkResponse {
                 success: false,
                 offset: 0,
@@ -185,6 +253,10 @@ impl Session {
         }
         let upload_chunk_req = file_deploy::UploadChunkRequest::decode(payload);
         if !upload_chunk_req.is_ok() {
+            println!(
+                "Invalid UploadChunk request, peer: {}",
+                self.peer.lock().await
+            );
             let resp = file_deploy::UploadChunkResponse {
                 success: false,
                 offset: 0,
@@ -198,6 +270,11 @@ impl Session {
         let write_result = {
             let mut file_handles = self.file_handles.lock().await;
             if !file_handles.contains_key(&upload_chunk_req.absolute_path) {
+                println!(
+                    "Upload chunk for unopened file: {}, peer: {}",
+                    upload_chunk_req.absolute_path,
+                    self.peer.lock().await
+                );
                 let resp = file_deploy::UploadChunkResponse {
                     success: false,
                     offset: upload_chunk_req.offset,
@@ -213,6 +290,11 @@ impl Session {
             file.write_all(&upload_chunk_req.data).await
         };
         if write_result.is_err() {
+            println!(
+                "Failed to write data to file: {}, peer: {}",
+                upload_chunk_req.absolute_path,
+                self.peer.lock().await
+            );
             let resp = file_deploy::UploadChunkResponse {
                 success: false,
                 offset: upload_chunk_req.offset,
@@ -235,11 +317,60 @@ impl Session {
         self.post_send(packet).await;
     }
 
+    async fn on_all_done(self: Arc<Self>) {
+        if !self.clone().is_authenticated().await {
+            println!(
+                "AllDone request but not authenticated, peer: {}",
+                self.peer.lock().await
+            );
+            return;
+        }
+        self.clone()
+            .post_send(package_cmd_data(Command::CmdAllDone))
+            .await;
+        let config = get_config();
+        if let Some(script) = config.script {
+            println!("Executing script: {}", script);
+            let output = if cfg!(target_os = "windows") {
+                std::process::Command::new("cmd")
+                    .args(&["/C", &script])
+                    .output()
+            } else {
+                std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(&script)
+                    .output()
+            };
+            match output {
+                Ok(output) => {
+                    if output.status.success() {
+                        println!("Script executed successfully");
+                    } else {
+                        println!(
+                            "Script execution failed with status: {}, stderr: {}",
+                            output.status,
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                    }
+                }
+                Err(e) => {
+                    println!("Failed to execute script: {}", e);
+                }
+            }
+        } else {
+            println!("No script configured to run after all files are uploaded");
+        }
+    }
+
     async fn read_loop(
         self: Arc<Self>,
         mut read_half: ReadHalf<TlsStream<TcpStream>>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         loop {
+            if self.need_stop.load(Ordering::SeqCst) {
+                drop(read_half);
+                return Ok(());
+            }
             let mut header_buf = [0u8; data_define::PACKET_HEADER_SIZE];
             read_half.read_exact(&mut header_buf).await?;
             let command: data_define::Command =
@@ -247,13 +378,23 @@ impl Session {
             let length = u32::from_le_bytes(header_buf[4..8].try_into().unwrap()) as usize;
             let checksum = u32::from_le_bytes(header_buf[8..12].try_into().unwrap());
             if length > data_define::MAX_PAYLOAD_SIZE {
+                println!(
+                    "Payload too large: {}, peer: {}",
+                    length,
+                    self.peer.lock().await
+                );
+                self.clone().stop().await;
                 return Err("Payload too large".into());
             }
             let mut payload_buf = vec![0u8; length];
-            read_half.read_exact(&mut payload_buf).await?;
-            let payload_crc32c = crc32c::crc32c(&payload_buf);
-            if payload_crc32c != checksum {
-                return Err("Checksum mismatch".into());
+            if length != 0 {
+                read_half.read_exact(&mut payload_buf).await?;
+                let payload_crc32c = crc32c::crc32c(&payload_buf);
+                if payload_crc32c != checksum {
+                    println!("Checksum mismatch, peer: {}", self.peer.lock().await);
+                    self.clone().stop().await;
+                    return Err("Checksum mismatch".into());
+                }
             }
             match command {
                 Command::CmdAuthenticate => {
@@ -268,6 +409,9 @@ impl Session {
                 Command::CmdUploadChunk => {
                     self.clone().on_upload_chunk(&payload_buf).await;
                 }
+                Command::CmdAllDone => {
+                    self.clone().on_all_done().await;
+                }
             }
         }
     }
@@ -277,17 +421,18 @@ impl Session {
         mut write_half: WriteHalf<TlsStream<TcpStream>>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         loop {
-            // 等待队列有数据
             let data = loop {
+                if self.need_stop.load(Ordering::SeqCst) {
+                    drop(write_half);
+                    return Ok(());
+                }
                 let mut queue = self.write_queue.lock().await;
                 if let Some(data) = queue.pop_front() {
-                    // 队列有数据，取出一个包
                     break data;
                 }
                 drop(queue);
                 self.notify.notified().await;
             };
-            // 发送数据
             write_half.write_all(data.as_slice()).await?;
             self.notify.notify_one();
         }
@@ -295,14 +440,18 @@ impl Session {
 
     async fn post_send(&self, data: Vec<u8>) {
         loop {
-            let mut queue = self.write_queue.lock().await;
-            if queue.len() < MAX_QUEUE_LEN {
-                queue.push_back(data);
-                self.notify.notify_one();
-                break;
+            if self.need_stop.load(Ordering::SeqCst) {
+                return;
             }
-            // 队列满了，释放锁，等待有空间
-            drop(queue);
+            {
+                let mut queue = self.write_queue.lock().await;
+                if queue.len() < data_define::MAX_QUEUE_LEN.into() {
+                    queue.push_back(data);
+                    self.notify.notify_one();
+                    break;
+                }
+                drop(queue);
+            }
             self.notify.notified().await;
         }
     }
@@ -312,24 +461,38 @@ impl Session {
         stream: TcpStream,
         acceptor: TlsAcceptor,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        *self.peer.lock().await = stream.peer_addr()?.to_string();
         let stream = acceptor.accept(stream).await?;
         let (read, write) = split(stream);
         let mut join_set = JoinSet::new();
 
-        let (shutdown_tx, mut shutdown_rx) = oneshot::channel::<()>();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
         let session = self.clone();
         join_set.spawn(async move {
             let _ = session.read_loop(read).await;
             let _ = shutdown_tx.send(());
         });
+        let session = self.clone();
         join_set.spawn(async move {
-            let _ = tokio::select! {
-                res = self.write_loop(write) => res,
-                _ = &mut shutdown_rx => Ok(()),
+            let res = tokio::select! {
+                res = session.write_loop(write) => res,
+                _ = shutdown_rx => Ok(()),
             };
+            println!("write loop exited: {:?}", res);
+            self.clone().stop().await;
         });
         join_set.join_all().await;
+        println!("session exited");
         Ok(())
+    }
+
+    async fn stop(&self) {
+        self.need_stop.store(true, Ordering::SeqCst);
+        {
+            let mut queue = self.write_queue.lock().await;
+            queue.clear();
+        }
+        self.notify.notify_waiters();
     }
 }
