@@ -22,17 +22,17 @@ jobs:
     - name: Install Mingw
       run: sudo apt install mingw-w64 -y
     - name: Build Linux
-      run: cargo build --verbose
+      run: cargo build --verbose --release
     - name: Install Windows target
       run: rustup target add x86_64-pc-windows-gnu
     - name: Build Windows
       run: cargo build --verbose --release --target=x86_64-pc-windows-gnu
     - name: List files
-      run: ls -la .
+      run: ls -la target/release && ls -la target/x86_64-pc-windows-gnu/release
     - name: Upload 
       uses: softprops/action-gh-release@v2
       if: startsWith(github.ref, 'refs/tags/') 
       with:
         files: |
-          /target/release/file_deploy
-          /target/x86_64-pc-windows-gnu/release/file_deploy.exe
+          target/release/file_deploy
+          target/x86_64-pc-windows-gnu/release/file_deploy.exe
