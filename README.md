@@ -218,7 +218,7 @@ chmod +x deploy.sh
 @echo off
 REM This is post_deploy.bat on the Windows machine
 echo Starting application...
-C:\path\to\gdbserver\gdbserver.exe localhost:1234 C:\DeployTarget\app.exe
+C:\path\to\gdbserver\gdbserver.exe --once 0.0.0.0:1234 C:\DeployTarget\app.exe
 ```
 
 4. Debug the application remotely using VS Code's remote debugging features.
