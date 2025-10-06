@@ -71,7 +71,6 @@ impl Session {
                 );
             }
         }
-        // 发送认证结果
         let auth_resp = file_deploy::AuthResponse {
             success: *self.authenticated.lock().await,
         };
@@ -305,7 +304,14 @@ impl Session {
             return;
         }
         if upload_chunk_req.is_last_chunk {
+            println!(
+                "Upload completed for file: {}, peer: {}",
+                upload_chunk_req.absolute_path,
+                self.peer.lock().await
+            );
+            
             let mut file_handles = self.file_handles.lock().await;
+            file_handles.get(&upload_chunk_req.absolute_path).unwrap().sync_all().await.ok();
             file_handles.remove(&upload_chunk_req.absolute_path);
         }
         let resp = file_deploy::UploadChunkResponse {
@@ -367,7 +373,7 @@ impl Session {
         mut read_half: ReadHalf<TlsStream<TcpStream>>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         loop {
-            if self.need_stop.load(Ordering::SeqCst) {
+            if self.clone().need_stop.load(Ordering::SeqCst) {
                 drop(read_half);
                 return Ok(());
             }
@@ -410,7 +416,10 @@ impl Session {
                     self.clone().on_upload_chunk(&payload_buf).await;
                 }
                 Command::CmdAllDone => {
-                    self.clone().on_all_done().await;
+                    let session = self.clone();
+                    tokio::spawn(async move {
+                        session.on_all_done().await;
+                    });
                 }
             }
         }
@@ -434,7 +443,8 @@ impl Session {
                 self.notify.notified().await;
             };
             write_half.write_all(data.as_slice()).await?;
-            self.notify.notify_one();
+            write_half.flush().await?;
+            self.notify.notify_waiters();
         }
     }
 
@@ -443,15 +453,13 @@ impl Session {
             if self.need_stop.load(Ordering::SeqCst) {
                 return;
             }
-            {
-                let mut queue = self.write_queue.lock().await;
-                if queue.len() < data_define::MAX_QUEUE_LEN.into() {
-                    queue.push_back(data);
-                    self.notify.notify_one();
-                    break;
-                }
-                drop(queue);
+            let mut queue = self.write_queue.lock().await;
+            if queue.len() < data_define::MAX_QUEUE_LEN.into() {
+                queue.push_back(data);
+                self.notify.notify_waiters();
+                break;
             }
+            drop(queue);
             self.notify.notified().await;
         }
     }
@@ -475,11 +483,10 @@ impl Session {
         });
         let session = self.clone();
         join_set.spawn(async move {
-            let res = tokio::select! {
+            let _ = tokio::select! {
                 res = session.write_loop(write) => res,
                 _ = shutdown_rx => Ok(()),
             };
-            println!("write loop exited: {:?}", res);
             self.clone().stop().await;
         });
         join_set.join_all().await;

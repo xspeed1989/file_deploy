@@ -64,7 +64,6 @@ impl Connection {
                 self.do_stop().await;
                 return Err("Payload too large".into());
             }
-
             let mut payload_buf = vec![0u8; length];
             if length > 0 {
                 read_half.read_exact(&mut payload_buf).await?;
@@ -113,11 +112,12 @@ impl Connection {
                 self.sender_notify.notified().await;
             };
             let res = write_half.write_all(&data).await;
+            write_half.flush().await?;
             if res.is_err() {
                 self.do_stop().await;
                 return Err("Failed to write to stream".into());
             }
-            self.sender_notify.notify_one();
+            self.sender_notify.notify_waiters();
         }
     }
 
@@ -126,15 +126,13 @@ impl Connection {
             if self.need_stop.load(Ordering::SeqCst) {
                 return;
             }
-            {
-                let mut queue = self.send_queue.lock().await;
-                if queue.len() < data_define::MAX_QUEUE_LEN.into() {
-                    queue.push_back(data);
-                    self.sender_notify.notify_one();
-                    break;
-                }
-                drop(queue);
+            let mut queue = self.send_queue.lock().await;
+            if queue.len() < data_define::MAX_QUEUE_LEN.into() {
+                queue.push_back(data);
+                self.sender_notify.notify_waiters();
+                break;
             }
+            drop(queue);
             self.sender_notify.notified().await;
         }
     }
@@ -328,7 +326,7 @@ impl Connection {
                 } else {
                     format!("{}/{}", remote_path, file_name)
                 };
-    
+
                 if let Err(e) = self
                     .clone()
                     .upload_file(local_path.clone(), &remote_path)
