@@ -23,6 +23,10 @@ pub(crate) struct Session {
 }
 
 fn is_valid_path(path: &str) -> bool {
+    if path.contains("..") {
+        println!("Path contains '..': {}", path);
+        return false;
+    }
     let config = get_config();
     for white_dir in config.whitelisted_dirs {
         let white_dir = white_dir.to_str().unwrap().to_string();
