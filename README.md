@@ -22,7 +22,7 @@ A secure file deployment tool that facilitates file transfers between developmen
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/xspeed1989/file_deploy.git
 cd file_deploy
 
 # Build in debug mode
