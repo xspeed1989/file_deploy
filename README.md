@@ -200,7 +200,7 @@ file_deploy deploy \
   --server \${WINDOWS_IP}:4399 \
   --fingerprint \${CERT_FINGERPRINT} \
   --password secure123 \
-  ./app.exe:C:/DeployTarget/app.exe
+  ./app.exe|C:/DeployTarget/app.exe
 EOL
 chmod +x deploy.sh
 ```

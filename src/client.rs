@@ -107,11 +107,11 @@ impl TypedValueParser for DeployPathPairValueParser {
                 "Value must be valid UTF-8",
             )
         })?;
-        let parts: Vec<&str> = s.splitn(2, ':').collect();
+        let parts: Vec<&str> = s.splitn(2, '|').collect();
         if parts.len() != 2 {
             return Err(clap::Error::raw(
                 clap::error::ErrorKind::InvalidValue,
-                "Value must be in the format <local_path>:<remote_path>",
+                "Value must be in the format <local_path>|<remote_path>",
             ));
         }
         Ok(DeployPathPair(parts[0].to_string(), parts[1].to_string()))

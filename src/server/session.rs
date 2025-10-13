@@ -8,7 +8,7 @@ use tokio::net::TcpStream;
 use tokio::sync::{Mutex as AsyncMutex, Notify, oneshot};
 use tokio::task::JoinSet;
 use tokio_rustls::{TlsAcceptor, server::TlsStream};
-
+use tokio::process::Command as TokioCommand;
 use crate::data_define;
 use crate::file_deploy;
 use crate::server::config::get_config;
@@ -313,9 +313,14 @@ impl Session {
                 upload_chunk_req.absolute_path,
                 self.peer.lock().await
             );
-            
+
             let mut file_handles = self.file_handles.lock().await;
-            file_handles.get(&upload_chunk_req.absolute_path).unwrap().sync_all().await.ok();
+            file_handles
+                .get(&upload_chunk_req.absolute_path)
+                .unwrap()
+                .sync_all()
+                .await
+                .ok();
             file_handles.remove(&upload_chunk_req.absolute_path);
         }
         let resp = file_deploy::UploadChunkResponse {
@@ -325,6 +330,29 @@ impl Session {
         };
         let packet = package_data(Command::CmdUploadChunk, resp);
         self.post_send(packet).await;
+    }
+
+    async fn execute_script(self: Arc<Self>, script: String) {
+        println!("Executing script: {}", script);
+        let child =  if cfg!(target_os = "windows") {
+            let mut cmd = TokioCommand::new("cmd");
+            cmd.args(&["/C", &script]);
+            cmd.spawn()
+        } else {
+            let mut cmd = TokioCommand::new("sh");
+            cmd.arg("-c").arg(&script);
+            cmd.spawn()
+        };
+        if child.is_err() {
+            println!("Failed to execute script: {}", child.err().unwrap());
+            return;
+        }
+        let mut child = child.unwrap();
+        let status = child.wait().await;
+        if status.is_err() {
+            println!("Failed to wait for script: {}", status.err().unwrap());
+            return;
+        }
     }
 
     async fn on_all_done(self: Arc<Self>) {
@@ -340,33 +368,7 @@ impl Session {
             .await;
         let config = get_config();
         if let Some(script) = config.script {
-            println!("Executing script: {}", script);
-            let output = if cfg!(target_os = "windows") {
-                std::process::Command::new("cmd")
-                    .args(&["/C", &script])
-                    .output()
-            } else {
-                std::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(&script)
-                    .output()
-            };
-            match output {
-                Ok(output) => {
-                    if output.status.success() {
-                        println!("Script executed successfully");
-                    } else {
-                        println!(
-                            "Script execution failed with status: {}, stderr: {}",
-                            output.status,
-                            String::from_utf8_lossy(&output.stderr)
-                        );
-                    }
-                }
-                Err(e) => {
-                    println!("Failed to execute script: {}", e);
-                }
-            }
+            tokio::spawn(self.clone().execute_script(script));
         } else {
             println!("No script configured to run after all files are uploaded");
         }
