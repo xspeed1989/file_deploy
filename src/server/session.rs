@@ -12,6 +12,7 @@ use tokio::process::Command as TokioCommand;
 use crate::data_define;
 use crate::file_deploy;
 use crate::server::config::get_config;
+use tracing::{info, warn, error};
 
 pub(crate) struct Session {
     peer: AsyncMutex<String>,
@@ -24,7 +25,7 @@ pub(crate) struct Session {
 
 fn is_valid_path(path: &str) -> bool {
     if path.contains("..") {
-        println!("Path contains '..': {}", path);
+        warn!("Path contains '..': {}", path);
         return false;
     }
     let config = get_config();
@@ -36,7 +37,7 @@ fn is_valid_path(path: &str) -> bool {
             return true;
         }
     }
-    println!("Path not allowed: {}", path);
+    warn!("Path not allowed: {}", path);
     false
 }
 
@@ -62,13 +63,13 @@ impl Session {
             let auth_req = auth_req.unwrap();
             let config = get_config();
             if auth_req.password == config.password {
-                println!(
+                info!(
                     "Authentication successful, peer: {}",
                     self.peer.lock().await
                 );
                 *self.authenticated.lock().await = true;
             } else {
-                println!(
+                warn!(
                     "Authentication failed: incorrect password, {}, peer: {}",
                     auth_req.password,
                     self.peer.lock().await
@@ -84,7 +85,7 @@ impl Session {
 
     async fn on_mkdir(self: Arc<Self>, payload: &[u8]) {
         if !self.clone().is_authenticated().await {
-            println!(
+            warn!(
                 "MkDir request but not authenticated, peer: {}",
                 self.peer.lock().await
             );
@@ -98,7 +99,7 @@ impl Session {
         }
         let mk_dir_req = file_deploy::MkDirRequest::decode(payload);
         if !mk_dir_req.is_ok() {
-            println!("Invalid MkDir request, peer: {}", self.peer.lock().await);
+            error!("Invalid MkDir request, peer: {}", self.peer.lock().await);
             let resp = file_deploy::MkDirResponse {
                 success: false,
                 error: "Invalid request".to_string(),
@@ -108,13 +109,13 @@ impl Session {
             return;
         }
         let mk_dir_req = mk_dir_req.unwrap();
-        println!(
+        info!(
             "MkDir request: {}, peer: {}",
             mk_dir_req.absolute_path,
             self.peer.lock().await
         );
         if !is_valid_path(&mk_dir_req.absolute_path) {
-            println!(
+            warn!(
                 "MkDir request with invalid path: {}, peer: {}",
                 mk_dir_req.absolute_path,
                 self.peer.lock().await
@@ -134,7 +135,7 @@ impl Session {
                 error: "".to_string(),
             }
         } else {
-            println!(
+            error!(
                 "Failed to create directory, peer: {}",
                 self.peer.lock().await
             );
@@ -149,7 +150,7 @@ impl Session {
 
     async fn on_start_upload(self: Arc<Self>, payload: &[u8]) {
         if !self.clone().is_authenticated().await {
-            println!(
+            warn!(
                 "Start upload request but not authenticated, peer: {}",
                 self.peer.lock().await
             );
@@ -164,7 +165,7 @@ impl Session {
 
         let start_upload_req = file_deploy::StartUploadRequest::decode(payload);
         if !start_upload_req.is_ok() {
-            println!(
+            error!(
                 "Invalid StartUpload request, peer: {}",
                 self.peer.lock().await
             );
@@ -177,14 +178,14 @@ impl Session {
             return;
         }
         let start_upload_req = start_upload_req.unwrap();
-        println!(
+        info!(
             "Start upload request for file: {}, size: {}, peer: {}",
             start_upload_req.absolute_path,
             start_upload_req.total_size,
             self.peer.lock().await
         );
         if !is_valid_path(&start_upload_req.absolute_path) {
-            println!(
+            warn!(
                 "StartUpload request with invalid path: {}, peer: {}",
                 start_upload_req.absolute_path,
                 self.peer.lock().await
@@ -204,7 +205,7 @@ impl Session {
             .open(&start_upload_req.absolute_path)
             .await;
         if file.is_err() {
-            println!(
+            error!(
                 "Failed to open file for upload: {}, peer: {}",
                 start_upload_req.absolute_path,
                 self.peer.lock().await
@@ -219,7 +220,7 @@ impl Session {
         }
         {
             if start_upload_req.total_size == 0 {
-                println!(
+                warn!(
                     "Warning: Start upload request with total_size=0 for file: {}, peer: {}",
                     start_upload_req.absolute_path,
                     self.peer.lock().await
@@ -241,7 +242,7 @@ impl Session {
 
     async fn on_upload_chunk(self: Arc<Self>, payload: &[u8]) {
         if !self.clone().is_authenticated().await {
-            println!(
+            warn!(
                 "Upload chunk request but not authenticated, peer: {}",
                 self.peer.lock().await
             );
@@ -256,7 +257,7 @@ impl Session {
         }
         let upload_chunk_req = file_deploy::UploadChunkRequest::decode(payload);
         if !upload_chunk_req.is_ok() {
-            println!(
+            error!(
                 "Invalid UploadChunk request, peer: {}",
                 self.peer.lock().await
             );
@@ -273,7 +274,7 @@ impl Session {
         let write_result = {
             let mut file_handles = self.file_handles.lock().await;
             if !file_handles.contains_key(&upload_chunk_req.absolute_path) {
-                println!(
+                warn!(
                     "Upload chunk for unopened file: {}, peer: {}",
                     upload_chunk_req.absolute_path,
                     self.peer.lock().await
@@ -293,7 +294,7 @@ impl Session {
             file.write_all(&upload_chunk_req.data).await
         };
         if write_result.is_err() {
-            println!(
+            error!(
                 "Failed to write data to file: {}, peer: {}",
                 upload_chunk_req.absolute_path,
                 self.peer.lock().await
@@ -308,7 +309,7 @@ impl Session {
             return;
         }
         if upload_chunk_req.is_last_chunk {
-            println!(
+            info!(
                 "Upload completed for file: {}, peer: {}",
                 upload_chunk_req.absolute_path,
                 self.peer.lock().await
@@ -333,7 +334,7 @@ impl Session {
     }
 
     async fn execute_script(self: Arc<Self>, script: String) {
-        println!("Executing script: {}", script);
+        info!("Executing script: {}", script);
         let child =  if cfg!(target_os = "windows") {
             let mut cmd = TokioCommand::new("cmd");
             cmd.args(&["/C", &script]);
@@ -344,20 +345,20 @@ impl Session {
             cmd.spawn()
         };
         if child.is_err() {
-            println!("Failed to execute script: {}", child.err().unwrap());
+            error!("Failed to execute script: {}", child.err().unwrap());
             return;
         }
         let mut child = child.unwrap();
         let status = child.wait().await;
         if status.is_err() {
-            println!("Failed to wait for script: {}", status.err().unwrap());
+            error!("Failed to wait for script: {}", status.err().unwrap());
             return;
         }
     }
 
     async fn on_all_done(self: Arc<Self>) {
         if !self.clone().is_authenticated().await {
-            println!(
+            warn!(
                 "AllDone request but not authenticated, peer: {}",
                 self.peer.lock().await
             );
@@ -370,7 +371,7 @@ impl Session {
         if let Some(script) = config.script {
             tokio::spawn(self.clone().execute_script(script));
         } else {
-            println!("No script configured to run after all files are uploaded");
+            info!("No script configured to run after all files are uploaded");
         }
     }
 
@@ -390,7 +391,7 @@ impl Session {
             let length = u32::from_le_bytes(header_buf[4..8].try_into().unwrap()) as usize;
             let checksum = u32::from_le_bytes(header_buf[8..12].try_into().unwrap());
             if length > data_define::MAX_PAYLOAD_SIZE {
-                println!(
+                error!(
                     "Payload too large: {}, peer: {}",
                     length,
                     self.peer.lock().await
@@ -403,7 +404,7 @@ impl Session {
                 read_half.read_exact(&mut payload_buf).await?;
                 let payload_crc32c = crc32c::crc32c(&payload_buf);
                 if payload_crc32c != checksum {
-                    println!("Checksum mismatch, peer: {}", self.peer.lock().await);
+                    error!("Checksum mismatch, peer: {}", self.peer.lock().await);
                     self.clone().stop().await;
                     return Err("Checksum mismatch".into());
                 }
@@ -496,7 +497,7 @@ impl Session {
             self.clone().stop().await;
         });
         join_set.join_all().await;
-        println!("session exited");
+        info!("session exited");
         Ok(())
     }
 

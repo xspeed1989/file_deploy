@@ -14,6 +14,7 @@ use tokio::sync::oneshot;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 use tokio::task::JoinSet;
 use tokio_rustls::client::TlsStream;
+use tracing::{info, warn, error};
 
 const FILE_CHUNK_SIZE: usize = 1 * 1024 * 1024; // 1MB
 
@@ -87,7 +88,7 @@ impl Connection {
                     self.on_upload_chunk_response(&payload_buf).await;
                 }
                 data_define::Command::CmdAllDone => {
-                    println!("All tasks completed");
+                    info!("All tasks completed");
                     self.do_stop().await;
                 }
             }
@@ -151,29 +152,29 @@ impl Connection {
     async fn on_auth_response(self: &Arc<Self>, payload: &[u8]) {
         let auth_res = file_deploy::AuthResponse::decode(payload);
         if auth_res.is_err() {
-            println!("Failed to decode authentication response");
+            error!("Failed to decode authentication response");
             self.do_stop().await;
             return;
         }
         let auth_res = auth_res.unwrap();
         if !auth_res.success {
-            println!("Authentication failed: password incorrect");
+            error!("Authentication failed: password incorrect");
             self.do_stop().await;
         }
-        println!("Authentication successful");
+        info!("Authentication successful");
         tokio::spawn(self.clone().do_tasks());
     }
 
     async fn on_mkdir_response(&self, payload: &[u8]) {
         let res = file_deploy::MkDirResponse::decode(payload);
         if res.is_err() {
-            println!("Failed to decode mkdir response");
+            error!("Failed to decode mkdir response");
             self.do_stop().await;
             return;
         }
         let res = res.unwrap();
         if !res.success {
-            println!("Failed to create remote directory: {}", res.error);
+            error!("Failed to create remote directory: {}", res.error);
             self.do_stop().await;
         }
     }
@@ -181,13 +182,13 @@ impl Connection {
     async fn on_start_upload_response(&self, payload: &[u8]) {
         let res = file_deploy::StartUploadResponse::decode(payload);
         if res.is_err() {
-            println!("Failed to decode start upload response");
+            error!("Failed to decode start upload response");
             self.do_stop().await;
             return;
         }
         let res = res.unwrap();
         if !res.success {
-            println!("Failed to start upload: {}", res.error);
+            error!("Failed to start upload: {}", res.error);
             self.do_stop().await;
         }
     }
@@ -195,13 +196,13 @@ impl Connection {
     async fn on_upload_chunk_response(&self, payload: &[u8]) {
         let res = file_deploy::UploadChunkResponse::decode(payload);
         if res.is_err() {
-            println!("Failed to decode upload chunk response");
+            error!("Failed to decode upload chunk response");
             self.do_stop().await;
             return;
         }
         let res = res.unwrap();
         if !res.success {
-            println!("Failed to upload chunk: {}", res.error);
+            error!("Failed to upload chunk: {}", res.error);
             self.do_stop().await;
         }
     }
@@ -227,7 +228,7 @@ impl Connection {
         local: PathBuf,
         remote: &String,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        println!(
+        info!(
             "Creating remote directory {} for local directory {}",
             remote,
             local.clone().display()
@@ -258,7 +259,7 @@ impl Connection {
         local: PathBuf,
         remote: &String,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        println!("Uploading file {} to {}", local.clone().display(), remote);
+        info!("Uploading file {} to {}", local.clone().display(), remote);
         let metadata = tokio::fs::metadata(&local).await?;
         let mut file_size = metadata.len();
         let req = file_deploy::StartUploadRequest {
@@ -307,7 +308,7 @@ impl Connection {
                     .upload_directory(local_path.clone(), &remote_path)
                     .await
                 {
-                    println!(
+                    error!(
                         "Failed to upload directory {}: {}",
                         local_path.clone().display(),
                         e
@@ -332,7 +333,7 @@ impl Connection {
                     .upload_file(local_path.clone(), &remote_path)
                     .await
                 {
-                    println!(
+                    error!(
                         "Failed to upload file {}: {}",
                         local_path.clone().display(),
                         e
@@ -341,7 +342,7 @@ impl Connection {
                     return;
                 }
             } else {
-                println!(
+                warn!(
                     "Path {} is neither a file nor a directory",
                     local_path.display()
                 );
@@ -385,7 +386,7 @@ impl Connection {
         });
 
         join_set.join_all().await;
-        println!("Connection finished");
+        info!("Connection finished");
         Ok(())
     }
 }

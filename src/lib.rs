@@ -1,15 +1,15 @@
 use clap::{Command, arg, value_parser};
+use tracing::warn;
 
-mod server;
 mod client;
 mod data_define;
+mod server;
 
 mod file_deploy {
     include!(concat!(env!("OUT_DIR"), "/file_deploy.rs"));
 }
 
 fn cli() -> Command {
-    
     Command::new("file-deploy")
         .version("0.1.0")
         .about("A CLI tool for deploying files")
@@ -38,6 +38,11 @@ fn cli() -> Command {
 }
 
 pub async fn entry() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Initialize tracing subscriber
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::INFO)
+        .init();
+
     let mut cmd = cli();
     let matches = cmd.clone().get_matches();
     match matches.subcommand() {
@@ -46,7 +51,10 @@ pub async fn entry() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let cert = sub_m.get_one::<String>("cert").unwrap();
             let private_key = sub_m.get_one::<String>("key").unwrap();
             let password = sub_m.get_one::<String>("password").unwrap();
-            let dirs: Vec<&std::path::PathBuf> = sub_m.get_many::<std::path::PathBuf>("DIR").unwrap().collect();
+            let dirs: Vec<&std::path::PathBuf> = sub_m
+                .get_many::<std::path::PathBuf>("DIR")
+                .unwrap()
+                .collect();
             let script = sub_m.get_one::<String>("script");
             return server::run(listen, cert, private_key, password, dirs, script).await;
         }
@@ -54,11 +62,14 @@ pub async fn entry() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let server = sub_m.get_one::<String>("server").unwrap();
             let fingerprint = sub_m.get_one::<String>("fingerprint").unwrap();
             let password = sub_m.get_one::<String>("password").unwrap();
-            let paths = sub_m.get_many::<client::DeployPathPair>("PATH").unwrap().collect();
+            let paths = sub_m
+                .get_many::<client::DeployPathPair>("PATH")
+                .unwrap()
+                .collect();
             return client::run(server, fingerprint, password, paths).await;
         }
         _ => {
-            println!("No valid subcommand was used");
+            warn!("No valid subcommand was used");
             cmd.print_help()?;
         }
     }

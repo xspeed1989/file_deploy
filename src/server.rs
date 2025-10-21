@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::vec::Vec;
 use tokio::net::TcpListener;
 use tokio_rustls::{TlsAcceptor, rustls};
+use tracing::info;
 mod session;
 
 mod config;
@@ -22,7 +23,7 @@ fn print_cert_fingerprint(cert: &str) -> Result<(), Box<dyn std::error::Error + 
             .iter()
             .map(|b| format!("{:02x}", b))
             .collect::<String>();
-        println!("Certificate SHA256 fingerprint: {}", fingerprint);
+        info!("Certificate SHA256 fingerprint: {}", fingerprint);
     } else {
         return Err("No certificates found in the provided file".into());
     }
@@ -37,7 +38,7 @@ pub(crate) async fn run(
     paths: Vec<&PathBuf>,
     script: Option<&String>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!(
+    info!(
         "Starting server on {}, cert: {}, key: {}, dirs: {:?}, script: {:?}",
         listen, cert, private_key, paths, script
     );
@@ -53,7 +54,7 @@ pub(crate) async fn run(
         .with_single_cert(certs, private_key)?;
     let acceptor = TlsAcceptor::from(Arc::new(config));
     let listener = TcpListener::bind(listen).await?;
-    println!("Server is running and listening on {}", listen);
+    info!("Server is running and listening on {}", listen);
     print_cert_fingerprint(cert)?;
     loop {
         let (stream, _) = listener.accept().await?;

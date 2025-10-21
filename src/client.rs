@@ -6,6 +6,7 @@ use rustls::client::danger::{ServerCertVerifier, HandshakeSignatureValid};
 use rustls::{CertificateError, DigitallySignedStruct, SignatureScheme};
 use rustls_pki_types::{CertificateDer, ServerName, UnixTime};
 use sha2::{Sha256, Digest};
+use tracing::info;
 
 pub(crate) mod connection;
 
@@ -124,12 +125,12 @@ pub(crate) async fn run(
     password: &String,
     paths: Vec<&DeployPathPair>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    println!(
+    info!(
         "Deploying to server {}, fingerprint: {}, paths: {:?}",
         server, fingerprint, paths
     );
     for path in &paths {
-        println!(
+        info!(
             "Uploading local path: {} to remote path: {}",
             path.0, path.1
         );

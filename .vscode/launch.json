@@ -18,14 +18,14 @@
             "args": [
                 "serv",
                 "--cert",
-                "certs/cert.pem",
-                "--private_key",
-                "certs/key.pem",
+                "test_certs/server.crt",
+                "--key",
+                "test_certs/server.key",
                 "-p",
                 "123456",
                 "."
             ],
-            "cwd": "${workspaceFolder}/target/debug",
+            "cwd": "${workspaceFolder}"
         },
         {
             "type": "lldb",
@@ -35,20 +35,23 @@
                 "args": [
                     "build",
                     "--bin",
-                    "file_deploy"
+                    "file_deploy",
                 ]
             },
             "args": [
                 "deploy",
                 "--server",
-                "127.0.0.1:4399",
+                "192.168.2.179:4399",
                 "--fingerprint",
-                "bea0153f9e34235f5078f8f53d0c2e58c9b4ee2585c9baa1b9e1cf7ab3533425",
+                "385afaea03a2a2ace1a3d54e5eea14e53eb7766992ede2a0dd0daa67c2d32533",
                 "-p",
                 "123456",
-                ".:/remote"
+                "/home/allen/桌面/test_cpp/build/test.exe:C:\\Users\\King\\Desktop"
             ],
             "cwd": "${workspaceFolder}/target/debug",
+            "env": {
+                "RUST_LOG": "debug"
+            }
         },
     ]
 }
