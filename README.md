@@ -137,7 +137,7 @@ mkdir -p ~/projects/windows_app
 cd ~/projects/windows_app
 
 # Setup a basic C++ Windows application
-cat > main.cpp << EOL
+cat > main.cc << EOL
 #include <windows.h>
 #include <iostream>
 
@@ -145,6 +145,17 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     MessageBoxA(NULL, "Hello from Linux-developed app!", "Remote Deploy Demo", MB_OK);
     return 0;
 }
+EOL
+
+# Create CMakeLists.txt
+cat > main.cc << EOL
+cmake_minimum_required(VERSION 3.19)
+
+project(test)
+
+add_executable(test main.cc)
+
+target_link_options(test PRIVATE "-static")
 EOL
 
 # Create VS Code launch configuration for remote debugging
@@ -157,7 +168,7 @@ cat > .vscode/launch.json << EOL
             "name": "(gdb) Launch",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${command:cmake.launchTargetPath}.exe",
+            "program": "${command:cmake.launchTargetPath}",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
@@ -201,7 +212,7 @@ cat > .vscode/tasks.json << EOL
                 "385afaea03a2a2ace1a3d54e5eea14e53eb7766992ede2a0dd0daa67c2d32533",
                 "--password",
                 "123456",
-                "${command:cmake.launchTargetPath}.exe=>C:\\Users\\King\\Desktop",
+                "${command:cmake.launchTargetPath}=>C:\\Users\\King\\Desktop",
             ],
         }
     ]
