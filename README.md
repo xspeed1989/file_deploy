@@ -82,14 +82,15 @@ file_deploy deploy \
   --server server_ip:4399 \
   --fingerprint server_certificate_fingerprint \
   --password your_secure_password \
-  /local/file1:/remote/destination1 /local/directory:/remote/destination
+  /local/file1=>/remote/destination1 /local/directory=>/remote/destination
 ```
 
 Parameters:
 - `--server`: Server address (required)
 - `--fingerprint`: Server certificate's SHA256 fingerprint (required)
 - `--password`: Authentication password (required)
-- Positional arguments: Files or directories to upload in format `local_path:remote_path`
+- `--delimiter`: Path delimiter for separating local and remote paths (default: `=>`)
+- Positional arguments: Files or directories to upload in format `local_path=>remote_path`
 
 ## Example: Remote Development and Debugging Workflow
 
@@ -103,6 +104,9 @@ This example demonstrates how to use File Deploy for C/C++ cross-platform develo
 - Windows target machine with network connectivity
 - File Deploy compiled for both platforms
 - [VS Code C/C++ Extension Package](https://marketplace.visualstudio.com/items?itemName=ms-vscode.cpptools-extension-pack) installed
+- CMake
+- mingw-w64 on linux side
+- gdbserver on windows side
 
 #### 2. Certificate Generation for Testing
 
@@ -153,14 +157,15 @@ cat > .vscode/launch.json << EOL
             "name": "(gdb) Launch",
             "type": "cppdbg",
             "request": "launch",
-            "program": "enter program name, for example ${workspaceFolder}/a.out",
+            "program": "${command:cmake.launchTargetPath}.exe",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
             "environment": [],
             "externalConsole": false,
             "MIMode": "gdb",
-            "miDebuggerServerAddress": "192.168.1.100:1234", 
+            "miDebuggerServerAddress": "IP:PORT",
+            "preLaunchTask": "deploy",
             "setupCommands": [
                 {
                     "description": "Enable pretty-printing for gdb",
@@ -179,37 +184,36 @@ cat > .vscode/launch.json << EOL
 }
 EOL
 
-# Create build script
-cat > build.sh << EOL
-#!/bin/bash
-x86_64-w64-mingw32-g++ main.cpp -o app.exe -mwindows
+# Create vscode tasks.json
+cat > .vscode/tasks.json << EOL
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "deploy",
+            "type": "process",
+            "command": "/hdd/develop/file_deploy/target/release/file_deploy",
+            "args": [
+                "deploy",
+                "--server",
+                "192.168.2.179:4399",
+                "--fingerprint",
+                "385afaea03a2a2ace1a3d54e5eea14e53eb7766992ede2a0dd0daa67c2d32533",
+                "--password",
+                "123456",
+                "${command:cmake.launchTargetPath}.exe=>C:\\Users\\King\\Desktop",
+            ],
+        }
+    ]
+}
 EOL
-chmod +x build.sh
-
-# Create deployment script
-cat > deploy.sh << EOL
-#!/bin/bash
-WINDOWS_IP="192.168.1.100"  # Replace with your Windows machine IP
-CERT_FINGERPRINT="abcdef1234567890"  # Replace with actual fingerprint
-
-# Build the application
-./build.sh
-
-# Deploy the application
-file_deploy deploy \
-  --server \${WINDOWS_IP}:4399 \
-  --fingerprint \${CERT_FINGERPRINT} \
-  --password secure123 \
-  ./app.exe|C:/DeployTarget/app.exe
-EOL
-chmod +x deploy.sh
 ```
 
 2. Build and deploy the application:
 
 ```bash
 # Build and deploy
-./deploy.sh
+code .
 ```
 
 3. Create Windows post-deployment script (on Windows target):
@@ -221,7 +225,7 @@ echo Starting application...
 C:\path\to\gdbserver\gdbserver.exe --once 0.0.0.0:1234 C:\DeployTarget\app.exe
 ```
 
-4. Debug the application remotely using VS Code's remote debugging features.
+4. Just press F5 to debug the application remotely using VS Code's remote debugging features.
 
 ## Dependencies
 

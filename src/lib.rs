@@ -33,7 +33,8 @@ fn cli() -> Command {
                 .arg(arg!(server: -s --server <SERVER> "server address, e.g. 192.168.1.2:4399"))
                 .arg(arg!(fingerprint: --fingerprint <FINGERPRINT> "server TLS certificate fingerprint"))
                 .arg(arg!(password: -p --password <PASSWORD> "set a password for upload authentication"))
-                .arg(arg!(<PATH> ... "files or directories to upload").value_parser(client::DeployPathPairValueParser)),
+                .arg(arg!(delimiter: -d --delimiter <DELIMITER> "delimiter for path pairs, used to separate local and remote paths").default_value("=>"))
+                .arg(arg!(<PATH> ... "path pairs in format: <local_path><delimiter><remote_path>, e.g., ./file.txt=>/data/file.txt")),
         )
 }
 
@@ -51,22 +52,59 @@ pub async fn entry() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let cert = sub_m.get_one::<String>("cert").unwrap();
             let private_key = sub_m.get_one::<String>("key").unwrap();
             let password = sub_m.get_one::<String>("password").unwrap();
-            let dirs: Vec<&std::path::PathBuf> = sub_m
+            let dirs: Vec<std::path::PathBuf> = sub_m
                 .get_many::<std::path::PathBuf>("DIR")
                 .unwrap()
+                .map(|p| {
+                    // Normalize path separators to '/' for cross-platform compatibility
+                    let p = p.to_string_lossy().replace("\\", "/");
+                    let p = std::path::PathBuf::from(p);
+                    match std::fs::canonicalize(&p) {
+                        Ok(canonical_path) => {
+                            // Remove Windows UNC prefix \\?\ if present
+                            let path_str = canonical_path.to_string_lossy();
+                            if path_str.starts_with(r"\\?\") {
+                                std::path::PathBuf::from(&path_str[4..])
+                            } else {
+                                canonical_path
+                            }
+                        }
+                        Err(_) => p.clone(),
+                    }
+                })
                 .collect();
+            let dir_refs: Vec<&std::path::PathBuf> = dirs.iter().collect();
             let script = sub_m.get_one::<String>("script");
-            return server::run(listen, cert, private_key, password, dirs, script).await;
+            return server::run(listen, cert, private_key, password, dir_refs, script).await;
         }
         Some(("deploy", sub_m)) => {
             let server = sub_m.get_one::<String>("server").unwrap();
             let fingerprint = sub_m.get_one::<String>("fingerprint").unwrap();
             let password = sub_m.get_one::<String>("password").unwrap();
-            let paths = sub_m
-                .get_many::<client::DeployPathPair>("PATH")
+            let delimiter = sub_m.get_one::<String>("delimiter").unwrap();
+            
+            // use delimiter parse PATH parameter
+            let path_strings: Vec<&String> = sub_m
+                .get_many::<String>("PATH")
                 .unwrap()
                 .collect();
-            return client::run(server, fingerprint, password, paths).await;
+            
+            let paths: Result<Vec<client::DeployPathPair>, String> = path_strings
+                .iter()
+                .map(|s| {
+                    let parts: Vec<&str> = s.splitn(2, delimiter.as_str()).collect();
+                    if parts.len() != 2 {
+                        Err(format!("Invalid path format: '{}'. Expected format: <local_path>{}<remote_path>", s, delimiter))
+                    } else {
+                        Ok(client::DeployPathPair::new(parts[0].to_string(), parts[1].to_string()))
+                    }
+                })
+                .collect();
+            
+            let paths = paths.map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::InvalidInput, e)) as Box<dyn std::error::Error + Send + Sync>)?;
+            let path_refs: Vec<&client::DeployPathPair> = paths.iter().collect();
+            
+            return client::run(server, fingerprint, password, path_refs).await;
         }
         _ => {
             warn!("No valid subcommand was used");
